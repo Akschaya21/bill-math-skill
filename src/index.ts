@@ -1,7 +1,13 @@
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { extractNumbers, Extracted } from './vision';
-import { applyOperation, initState, MathState } from './math';
+import {
+  applyOperation,
+  initState,
+  MathState,
+  buildStateFromUtterance,
+  looksLikeMathRequest,
+} from './math';
 import { summarizeExtraction } from './format';
 
 dotenv.config();
@@ -81,11 +87,29 @@ async function handleDialog(args: DialogArgs) {
   }
 
   const imageItem = (args.items || []).find((i) => i?.url && (i.mimeType || '').startsWith('image/'));
+
   if (!imageItem?.url) {
+    // Voice-only fallback path.
+    const voiceState = buildStateFromUtterance(utterance);
+    if (voiceState && looksLikeMathRequest(utterance)) {
+      // User gave numbers AND an operation in one shot — compute immediately.
+      const result = applyOperation(voiceState, utterance);
+      if (result.done || !result.state) {
+        return { content: [{ type: 'text', text: result.text }] };
+      }
+      return buildAwaitResponse(result.text, result.state);
+    }
+    if (voiceState) {
+      // Numbers but no operation yet — prompt.
+      return buildAwaitResponse(
+        `Got ${voiceState.extracted.items.length} number${voiceState.extracted.items.length === 1 ? '' : 's'}. What do you want to do? (split, tip, tax, discount, or total)`,
+        voiceState,
+      );
+    }
     return {
       content: [{
         type: 'text',
-        text: `Take a photo of the bill, receipt, or price list and I'll do the math.`,
+        text: `Show me a photo of the bill, or tell me the numbers — for example, "split 1500 between 4" or "18% tip on 2400".`,
       }],
     };
   }

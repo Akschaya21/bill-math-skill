@@ -10,7 +10,7 @@
     { "channel": "instant.message", "routing_mode": "active" }
   ],
   "domains": {
-    "math": "Reads numbers from photos of bills, receipts, price lists, and computes totals, splits, tips, taxes, discounts. Match utterances like 'split by 4', 'add 18% tip', 'what's the total', '20% off', 'add tax', 'split between 3 people', and any follow-up answers about bill math operations."
+    "math": "Bill and receipt math. Reads numbers from photos OR from spoken values, then computes totals, splits, tips, taxes, discounts. Primary trigger: a photo of a bill, receipt, menu, or price tags shared in the AI chat. Voice fallback: utterances containing math operations even without a photo, e.g., 'split 1500 between 4', 'what is 18% tip on 2400', 'add 18% GST to 1200', 'what is 20% off 800', 'help me with bill math', 'split this bill', 'calculate the total'. Also handles follow-up answers like 'split by 4', 'add 18% tip', 'now 20% off', 'done' after an initial math turn."
   },
   "permissions": [],
   "data_retention": {

@@ -34,6 +34,33 @@ export function initState(extracted: Extracted): MathState {
   };
 }
 
+const OP_HINT_RE = /\b(tip|gratuity|gst|tax|vat|off|discount|split|divide|total|sum|between|among|ways?)\b/i;
+
+export function extractNumbersFromUtterance(u: string): number[] {
+  const cleaned = u
+    .replace(/(\d+(?:\.\d+)?)\s*%/g, ' ')
+    .replace(/\b(\d+)\s*(people|ways?|persons?)\b/gi, ' ');
+  const matches = cleaned.match(/\d+(?:\.\d+)?/g) || [];
+  return matches.map((m) => parseFloat(m)).filter((n) => isFinite(n));
+}
+
+export function looksLikeMathRequest(u: string): boolean {
+  return OP_HINT_RE.test(u);
+}
+
+export function buildStateFromUtterance(u: string): MathState | null {
+  const nums = extractNumbersFromUtterance(u);
+  if (nums.length === 0) return null;
+  return initState({
+    items: nums,
+    subtotal: null,
+    tax: null,
+    total: null,
+    currency: null,
+    confidence: 'high',
+  });
+}
+
 export function applyOperation(state: MathState, utterance: string): MathResult {
   const u = utterance.trim();
   const currency = state.extracted.currency;
