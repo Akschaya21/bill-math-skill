@@ -1,29 +1,20 @@
 {
-  "name": "Template Skill",
+  "name": "Bill Math",
   "version": "1.0.0",
   "interface": "hybrid",
   "endpoints": {
-    "webhook": "https://your-domain.ngrok-free.app/webhook",
-    "mcp": "https://your-domain.ngrok-free.app/mcp"
+    "mcp": "https://your-domain.example.com/mcp"
   },
   "triggers": [
-    { "channel": "instant.message", "routing_mode": "active" },
-    { "channel": "instant.image",      "routing_mode": "active" },
-    { "channel": "media.photo",        "routing_mode": "passive" }
+    { "channel": "instant.image",   "routing_mode": "active" },
+    { "channel": "instant.message", "routing_mode": "active" }
   ],
   "domains": {
-    "general": "Handle general greetings and tests for the template skill. Match utterances like 'test template' or 'hello from template'."
+    "math": "Reads numbers from photos of bills, receipts, price lists, and computes totals, splits, tips, taxes, discounts. Match utterances like 'split by 4', 'add 18% tip', 'what's the total', '20% off', 'add tax', 'split between 3 people', and any follow-up answers about bill math operations."
   },
-  "permissions": [
-    "notification.send",
-    "user.profile.read",
-    "user.location.read"
-  ],
-  "allowedTools": [
-    "mail.send"
-  ],
+  "permissions": [],
   "data_retention": {
-    "max_days": 30,
-    "deletion_webhook": "https://your-domain.ngrok-free.app/delete-user"
+    "max_days": 1,
+    "deletion_webhook": "https://your-domain.example.com/delete-user"
   }
 }

@@ -1,64 +1,21 @@
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
-import { verifyTraceSignature } from './hmac';
+import { extractNumbers, Extracted } from './vision';
+import { applyOperation, initState, MathState } from './math';
+import { summarizeExtraction } from './format';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TRACE_HMAC_SECRET = process.env.TRACE_HMAC_SECRET || '';
-const TRACE_SKILL_ID = process.env.TRACE_SKILL_ID || '';
-const BRAIN_BASE_URL = process.env.BRAIN_BASE_URL || 'https://brain.endlessriver.ai';
 
-// Capture rawBody BEFORE JSON parsing — required for HMAC verification.
 app.use(
   express.json({
+    limit: '10mb',
     verify: (req: any, _res, buf) => { req.rawBody = buf; },
   })
 );
 
-// ─── 🟢 Webhook Endpoint ──────────────────────────────────────────────────────
-// media.photo, media.audio, media.video events arrive here.
-// Always: return 202 immediately, then process asynchronously and POST to callback_url.
-app.post('/webhook', verifyTraceSignature(TRACE_HMAC_SECRET), async (req: Request, res: Response) => {
-  const { event, user, request_id, callback_url } = req.body;
-  console.log(`[Webhook] Received ${event.channel} for user ${user.id}`);
-
-  // Acknowledge immediately — never keep the platform waiting.
-  res.status(202).json({ status: 'accepted' });
-
-  // Process asynchronously, then call back with results.
-  processEvent({ event, user, requestId: request_id, callbackUrl: callback_url })
-    .catch((err) => console.error('[Webhook] processing error:', err));
-});
-
-async function processEvent(opts: {
-  event: any;
-  user: any;
-  requestId: string;
-  callbackUrl: string;
-}) {
-  const { event, user, requestId, callbackUrl } = opts;
-
-  // TODO: add your processing logic here (vision, audio, etc.)
-  // Then POST the results to callbackUrl.
-
-  const responses = [
-    {
-      type: 'notification',
-      content: {
-        title: 'Template Skill',
-        body: `Processed your ${event.channel} event.`,
-      },
-    },
-  ];
-
-  await postCallback(callbackUrl, requestId, responses);
-}
-
-// ─── 🔵 MCP (JSON-RPC) Endpoint ──────────────────────────────────────────────
-// Used for dialog turns (voice queries).
 app.post('/mcp', async (req: Request, res: Response) => {
   const { jsonrpc, method, params, id } = req.body;
   if (jsonrpc !== '2.0') return res.status(400).send('Invalid JSON-RPC');
@@ -71,36 +28,30 @@ app.post('/mcp', async (req: Request, res: Response) => {
         tools: [
           {
             name: 'handle_dialog',
-            description: 'My main dialog tool.',
+            description: 'Reads numbers from photos and does math: totals, splits, tips, taxes, discounts.',
             inputSchema: {
               type: 'object',
-              properties: {
-                utterance: { type: 'string' }
-              }
-            }
-          }
-        ]
-      }
+              properties: { utterance: { type: 'string' } },
+            },
+          },
+        ],
+      },
     });
   }
 
   if (method === 'tools/call') {
-    const { name, arguments: args } = params;
-    if (name === 'handle_dialog') {
+    const args = params?.arguments || {};
+    try {
+      const result = await handleDialog(args);
+      return res.json({ jsonrpc: '2.0', id, result });
+    } catch (err: any) {
+      console.error('[handle_dialog] error:', err?.message || err);
       return res.json({
         jsonrpc: '2.0',
         id,
         result: {
-          content: [
-            { type: 'text', text: `You said: ${args.utterance}` },
-            {
-              type: 'embedded_responses',
-              responses: [
-                { type: 'feed_item', content: { title: 'Dialog Handled', story: args.utterance } }
-              ]
-            }
-          ]
-        }
+          content: [{ type: 'text', text: `Something went wrong reading the photo. Try again.` }],
+        },
       });
     }
   }
@@ -108,56 +59,79 @@ app.post('/mcp', async (req: Request, res: Response) => {
   res.status(404).json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
 });
 
-// ─── Callback helper ─────────────────────────────────────────────────────────
-// Sign and POST the skill's response back to the platform after async processing.
-
-async function postCallback(callbackUrl: string, requestId: string, responses: any[]) {
-  const body      = JSON.stringify({ request_id: requestId, status: 'success', responses });
-  const timestamp = Date.now().toString();
-  const signature = 'sha256=' + crypto
-    .createHmac('sha256', TRACE_HMAC_SECRET)
-    .update(`${timestamp}.${body}`)
-    .digest('hex');
-
-  const res = await fetch(callbackUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Trace-Timestamp': timestamp,
-      'X-Trace-Signature': signature,
-    },
-    body,
-  });
-  console.log(`[Callback] → ${res.status}`);
+interface DialogArgs {
+  utterance?: string;
+  items?: Array<{ url?: string; mimeType?: string }>;
+  pending_context?: {
+    context_key?: string;
+    context_payload?: { state?: MathState };
+  } | null;
 }
 
-// ─── 🟣 Proactive Push API Helper ───────────────────────────────────────────
-// Use this to send responses on your own schedule (cron, job queue, etc.)
-// without a triggering event from the platform.
+async function handleDialog(args: DialogArgs) {
+  const utterance = (args.utterance || '').trim();
+  const pending = args.pending_context;
 
-async function sendPushResponse(user_id: string, responses: any[]) {
-  const url = `${BRAIN_BASE_URL}/api/skill-push/${TRACE_SKILL_ID}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${TRACE_HMAC_SECRET}`,
-    },
-    body: JSON.stringify({ user_id, responses }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    console.error(`[Push] ${res.status} ${text}`);
+  if (pending?.context_key === 'bill_math' && pending.context_payload?.state) {
+    const result = applyOperation(pending.context_payload.state, utterance);
+    if (result.done || !result.state) {
+      return { content: [{ type: 'text', text: result.text }] };
+    }
+    return buildAwaitResponse(result.text, result.state);
   }
+
+  const imageItem = (args.items || []).find((i) => i?.url && (i.mimeType || '').startsWith('image/'));
+  if (!imageItem?.url) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Take a photo of the bill, receipt, or price list and I'll do the math.`,
+      }],
+    };
+  }
+
+  const extracted = await extractNumbers(imageItem.url);
+  const summary = summarizeExtraction(extracted);
+
+  if (extracted.items.length === 0) {
+    return { content: [{ type: 'text', text: summary }] };
+  }
+
+  const state = initState(extracted);
+  return buildAwaitResponse(summary, state);
 }
 
-// ─── Lifecycle / Deletion ────────────────────────────────────────────────────
+function buildAwaitResponse(spoken: string, state: MathState) {
+  return {
+    content: [
+      { type: 'text', text: spoken },
+      {
+        type: 'embedded_responses',
+        responses: [
+          {
+            type: 'await_input',
+            content: {
+              question: 'What do you want to do? (split, tip, tax, discount, or done)',
+              context_key: 'bill_math',
+              context_payload: { state },
+              timeout_ms: 120000,
+            },
+          },
+        ],
+      },
+    ],
+    state: 'awaiting_input',
+  };
+}
+
 app.post('/delete-user', (req: Request, res: Response) => {
   const { user_id } = req.body;
   console.log(`[Cleanup] Deleting data for user ${user_id}`);
   res.json({ ok: true });
 });
 
+app.get('/', (_req, res) => res.send('Bill Math skill running'));
+
 app.listen(PORT, () => {
-  console.log(`🚀 Skill template running at http://localhost:${PORT}`);
+  console.log(`Bill Math skill running at http://localhost:${PORT}`);
 });
