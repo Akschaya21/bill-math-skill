@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "interface": "hybrid",
   "endpoints": {
-    "mcp": "https://your-domain.example.com/mcp"
+    "mcp": "https://bill-math-skill-production.up.railway.app/mcp"
   },
   "triggers": [
     { "channel": "instant.image",   "routing_mode": "active" },
@@ -15,6 +15,6 @@
   "permissions": [],
   "data_retention": {
     "max_days": 1,
-    "deletion_webhook": "https://your-domain.example.com/delete-user"
+    "deletion_webhook": "https://bill-math-skill-production.up.railway.app/delete-user"
   }
 }
